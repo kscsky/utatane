@@ -290,7 +290,8 @@ button.big[disabled] { opacity: .38; cursor: not-allowed; filter: none; transfor
 
 /* ---------- 弹层 ---------- */
 .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(4, 4, 8, .74); backdrop-filter: blur(8px); }
-.modal[hidden] { display: none; }
+/* display:flex 会盖掉 hidden 属性，这里统一兜底 */
+[hidden] { display: none !important; }
 .modal-box {
   position: relative; width: min(360px, 92vw); padding: 24px 24px 22px;
   background: #14131c; border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow);

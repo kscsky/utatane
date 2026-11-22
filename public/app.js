@@ -58,6 +58,7 @@ async function api(path, opts) {
   if (!r.ok) throw new Error(`HTTP ${r.status}`)
   return r.json()
 }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 const imgSrc = (u) => (u ? `/api/img?u=${encodeURIComponent(u)}` : '')
 let rulerAt = -1e9 // 刻度 DOM 重建节流时戳
 
@@ -359,7 +360,9 @@ async function pickPalette(url) {
   try {
     const im = new Image()
     im.src = imgSrc(url)
-    await im.decode()
+    // decode() 在图片被拦截或标签页未合成时可能永不 resolve，
+    // 取色只是装饰，绝不能把调用方挂在这上面
+    await Promise.race([im.decode(), sleep(1500)])
     const c = document.createElement('canvas')
     c.width = 28; c.height = 28
     const x = c.getContext('2d')
@@ -446,9 +449,9 @@ function chartView() {
   const only = el.onlySheet.checked
   const rows = only ? c.tracks.filter(t => t.sheetCount > 0) : c.tracks
   const pct = c.total ? Math.round(c.sheeted * 100 / c.total) : 0
-  const parts = [`${c.name || ''} ${c.total} 首`, `${c.sheeted} 首有谱（${pct}%）`, `${c.pages} 份谱`]
-  if (only && rows.length !== c.total) parts.push(`已筛掉无谱，显示 ${rows.length}`)
-  if (c.sheeted <= 5) parts.push('这份榜单官方谱极少，歌太新还没上谱')
+  const parts = [`${c.name || ''} ${c.total} 首`, `有谱 ${c.sheeted}（${pct}%）`, `谱 ${c.pages} 份`]
+  if (only && rows.length !== c.total) parts.push(`已筛除无谱`)
+  if (only && c.sheeted <= 5) parts.push(`谱太少，可取消筛选看全榜`)
   return { rows, note: parts.join(' · ') }
 }
 
@@ -488,13 +491,17 @@ let tab = 'chart'
 function showTab(mode) {
   tab = mode
   $$('.tab').forEach(b => b.classList.toggle('on', b.dataset.tab === mode))
-  el.chartPick.hidden = mode !== 'chart'
-  el.onlySheet.closest('label').hidden = mode !== 'chart'
+  const isChart = mode === 'chart'
+  // 榜单选择器与筛选只在榜单视图有意义；搜索视图下留空位反而误导
+  el.chartPick.hidden = !isChart
+  el.onlySheet.closest('label').hidden = !isChart
+  el.listNote.hidden = !isChart
 }
 
 function setTab(mode) {
   showTab(mode)
-  if (mode === 'chart') return loadChart()
+  // 榜单一次查谱代价不小（逐首请求），同一份榜单在 tab 间来回切不该重查
+  if (mode === 'chart') return filterChart()
   if (el.q.value.trim()) return doSearch()
   ++listSeq // 作废在途的榜单请求，别让它回填到搜索视图
   el.results.innerHTML = ''
@@ -554,6 +561,8 @@ async function pick(li, s, preset) {
       })
     }
     await setupAudio(d)
+    // 载入完成就立刻刷新读数，不等下一帧：帧率受标签页节流时界面也不该停在初始值
+    render()
   } catch (e) { toast('载入失败：' + e.message, 1) }
 }
 
@@ -565,7 +574,7 @@ async function setupAudio(d) {
     el.art.style.backgroundImage = `url('${imgSrc(cover)}')`
     el.bgCover.style.backgroundImage = `url('${imgSrc(cover)}')`
     el.bgCover.classList.add('on')
-    await pickPalette(cover)
+    pickPalette(cover) // 装饰性取色，不阻塞音源初始化
   }
   const a = d.audio
   el.btnPlay.disabled = true
@@ -768,12 +777,7 @@ el.btnDemo.onclick = () => {
   render()
 }
 
-el.seek.oninput = () => {
-  const v = Number(el.seek.value)
-  S.t = v
-  if (audioLive()) el.audio.currentTime = v / 1000
-  render()
-}
+el.seek.oninput = () => { seekTo(Number(el.seek.value)); render() }
 el.vol.oninput = () => { el.audio.volume = el.vol.value / 100 }
 
 el.mode.onchange = () => { S.mode = el.mode.value; saveStamps(); render() }
@@ -824,28 +828,41 @@ el.frame.addEventListener('drop', async (e) => {
 function startLocal() {
   S.demo = true
   S.clockOn = true
+  rebaseClock(S.t)
   el.btnDemo.classList.add('accent')
   el.btnPlay.textContent = '❚❚'
 }
 function seekTo(ms) {
   S.t = clamp(Math.round(ms), 0, durMs())
+  if (S.clockOn) rebaseClock(S.t)
   if (audioLive()) {
     try { el.audio.currentTime = S.t / 1000 } catch { /* seek 超界 */ }
   }
 }
 
+// 本机时钟按真实时间换算，不逐帧累加：标签页被节流、帧率掉到 1fps 时
+// 时间线依然和墙上时钟一致，只是刷新没那么顺
+let clockBase = 0, clockStart = 0
+const rebaseClock = (ms) => { clockBase = ms; clockStart = performance.now() }
+
 let last = performance.now()
 function frame(nowMs) {
+  // 先续上下一帧：这一帧里 paint/render 抛错，也不该让整个走带永久停摆
+  requestAnimationFrame(frame)
   const dt = Math.min(0.05, (nowMs - last) / 1000)
   last = nowMs
   if (audioLive() && !el.audio.paused) S.t = el.audio.currentTime * 1000 + S.lead
   else if (S.clockOn) {
-    S.t += dt * 1000
-    if (S.t > durMs()) S.t = 0
+    const d = durMs()
+    const el2 = clockBase + (nowMs - clockStart)
+    S.t = d > 0 ? el2 % d : el2
   }
-  paint(dt)
-  render()
-  requestAnimationFrame(frame)
+  try {
+    paint(dt)
+    render()
+  } catch (e) {
+    if (!frame.reported) { frame.reported = true; toast('渲染异常：' + e.message, 1) }
+  }
 }
 requestAnimationFrame(frame)
 

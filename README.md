@@ -61,7 +61,7 @@ server/
   ncm.mjs     网易云接口封装：搜索 / 歌曲详情 / 曲谱列表 / 歌词 / 榜单 / 二维码登录 / 代理
 public/
   app.js      单页应用：时间线 → 控制点插值 → 谱面位移 + canvas 背景
-  selftest.html  浏览器端自测（同源 iframe 驱动真实 app，46 项断言）
+  selftest.html  浏览器端自测（同源 iframe 驱动真实 app，47 项断言）
 test/
   math.test.mjs  从 app.js 源码切片注入可变状态后求值，43 项断言（无需浏览器）
 ```
@@ -76,7 +76,7 @@ test/
 
 ```bash
 node test/math.test.mjs              # 43 项
-# 浏览器打开 http://127.0.0.1:5177/selftest.html   # 46 项，末行应为「✅ 全部通过」
+# 浏览器打开 http://127.0.0.1:5177/selftest.html   # 47 项，末行应为「✅ 全部通过」
 ```
 
 ## 边界与风险

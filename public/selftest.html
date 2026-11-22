@@ -15,12 +15,37 @@
 const out = document.getElementById('out')
 const lines = []
 let fails = 0
+let skipped = 0
+const say = () => { out.innerHTML = lines.join('\n'); document.title = fails ? 'FAIL' : (skipped ? 'PARTIAL' : 'DONE') }
 const ok = (name, cond, extra = '') => {
   if (!cond) fails++
   lines.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  |  ' + extra : ''}`)
-  out.innerHTML = lines.join('\n')
+  say()
+}
+// 依赖真实帧率/时钟的断言：标签页被节流时不可能成立，记 SKIP 而不是 FAIL
+const timed = (name, cond, extra = '') => {
+  if (typeof THROTTLED !== 'undefined' && THROTTLED) {
+    skipped++
+    lines.push(`SKIP  ${name}（标签页被节流，时序类断言不作数）`)
+    say()
+    return
+  }
+  ok(name, cond, extra)
 }
 const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+
+// rAF 在未被合成/被节流的文档里根本不回调，且定时器会被夹到 ~1 次/秒，
+// 那时「测量经过了多少真实时间」必然失真。关键是**被测的那个 iframe** 是否在渲染，
+// 外层页面正常不代表它正常，所以计数要跑到它的 window 里去。
+let THROTTLED
+async function rafBeats(win, ms = 1200) {
+  let n = 0
+  const t0 = Date.now()
+  const loop = () => { n++; if (Date.now() - t0 < ms) win.requestAnimationFrame(loop) }
+  win.requestAnimationFrame(loop)
+  await sleep(ms + 200)
+  return n
+}
 async function waitReady(pred, ms = 25000) {
   const t0 = Date.now()
   while (Date.now() - t0 < ms) {
@@ -36,6 +61,12 @@ async function waitReady(pred, ms = 25000) {
   const D = () => f.contentDocument
   const space = () => win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }))
   const change = (el) => { el.dispatchEvent(new win.Event('change', { bubbles: true })) }
+
+  // 标签页未被合成时 rAF 不回调：只有「靠帧率/真实时间」的断言不可信，
+  // 其余（DOM、网络、状态）照常判定
+  const beats = await rafBeats(win)
+  THROTTLED = beats < 5
+  lines.push(`NOTE  rAF 1.2s 内 ${beats} 次${THROTTLED ? '，时序类断言记 SKIP' : '，标签页正常合成'}`)
 
   ok('应用挂载（读谱线存在）', await waitReady(() => D().querySelector('.readline .bar')))
 
@@ -89,7 +120,7 @@ async function waitReady(pred, ms = 25000) {
   let inked = 0
   const px = cx.getImageData(0, 0, cv.width, cv.height).data
   for (let i = 3; i < px.length; i += 4) if (px[i] > 8) inked++
-  ok('背景粒子有绘制', inked > 500, `非透明像素=${inked}`)
+  timed('背景粒子有绘制', inked > 500, `非透明像素=${inked}`)
   ok('封面铺底已启用', D().getElementById('bgCover').classList.contains('on'))
 
   // ---- 实时走带：本机时钟应以真实速度推进 ----
@@ -97,7 +128,7 @@ async function waitReady(pred, ms = 25000) {
   ok('空格无音源 → 本机时钟起播', D().getElementById('btnPlay').textContent === '❚❚')
   const ta = Number(strip.dataset.t); await sleep(1000)
   const tb = Number(strip.dataset.t)
-  ok('本机时钟实时推进（±25%）', tb - ta > 750 && tb - ta < 1250, `1s 走 ${tb - ta}ms`)
+  timed('本机时钟实时推进（±25%）', tb - ta > 750 && tb - ta < 1250, `1s 走 ${tb - ta}ms`)
 
   // ---- 打点：如实记录，不强制首点为 0 ----
   D().getElementById('btnReset').dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
@@ -148,8 +179,12 @@ async function waitReady(pred, ms = 25000) {
   ok('每条给出谱份数徽标', badge.every(t => /谱\d+份/.test(t)), badge[0])
   ok('勾选只看有谱时不出现无谱', !badge.some(t => /无谱/.test(t)))
   const note = D().getElementById('listNote')
-  ok('榜单显示有谱率统计', !note.hidden && /首有谱（\d+%）/.test(note.textContent),
+  ok('榜单显示有谱率统计', !note.hidden && /有谱 \d+（\d+%）/.test(note.textContent),
      note.textContent.replace(/\s+/g, ' ').slice(0, 64))
+  // display:flex 会盖掉 hidden 属性，必须确认这些控件真的不占位（offsetParent 为 null）
+  const laid = (id) => D().getElementById(id).offsetParent !== null
+  ok('榜单视图下选择器与统计可见', laid('chartPick') && laid('listNote'),
+     `pick=${laid('chartPick')} note=${laid('listNote')}`)
   ok('徽标附带 BPM（约半数有值）', badge.filter(t => /BPM/.test(t)).length >= 5,
      `带BPM=${badge.filter(t => /BPM/.test(t)).length}/${badge.length}`)
   // 取消“只看有谱”→ 应补回无谱歌曲（服务端有谱信息已缓存，不重复查谱）
