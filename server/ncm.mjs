@@ -106,7 +106,8 @@ const chartCache = new Map()
 // 官方榜单：trackIds 在 detail 里为空，直接取 result.tracks
 export const CHARTS = [
   { id: '3778678', name: '热歌榜' },
-  { id: '88888888', name: '新歌榜' },
+  { id: '3779629', name: '新歌榜' },
+  { id: '19723756', name: '飙升榜' },
   { id: '2884035', name: '原创榜' },
 ]
 

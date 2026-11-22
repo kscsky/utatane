@@ -144,6 +144,11 @@ aside::-webkit-scrollbar { width: 0; }
 .list .t { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list .s { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list .s b { color: var(--c3); font-weight: 600; }
+.note {
+  font-family: var(--mono); font-size: 10.5px; color: var(--faint); line-height: 1.6;
+  margin: 0 0 7px; padding: 5px 8px; border-radius: 8px;
+  background: rgba(255, 255, 255, .04); border: 1px solid var(--line);
+}
 .empty { font-size: 11.5px; color: var(--faint); line-height: 1.75; padding: 2px 2px 0; }
 .empty b { color: var(--dim); }
 .hint { font-size: 11.5px; color: var(--faint); line-height: 1.8; margin-bottom: 9px; }

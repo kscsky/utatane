@@ -8,7 +8,7 @@ const $$ = (s) => [...document.querySelectorAll(s)]
 
 const el = {
   q: $('#q'), results: $('#results'), resEmpty: $('#resEmpty'),
-  chartPick: $('#chartPick'), onlySheet: $('#onlySheet'),
+  chartPick: $('#chartPick'), onlySheet: $('#onlySheet'), listNote: $('#listNote'),
   sheets: $('#sheets'), sheetEmpty: $('#sheetEmpty'), sheetCount: $('#sheetCount'),
   strip: $('#strip'), ruler: $('#ruler'), frame: $('#frame'), overlay: $('#overlay'),
   pageInfo: $('#pageInfo'), anchorInfo: $('#anchorInfo'),
@@ -388,10 +388,12 @@ function loadList(row, fetchRows) {
   const seq = ++listSeq
   el.resEmpty.textContent = row.loading
   el.resEmpty.hidden = false
-  return fetchRows().then(rows => {
+  return fetchRows().then(({ rows, note }) => {
     if (seq !== listSeq) return
     el.results.innerHTML = ''
     el.results.dataset.src = row.src
+    el.listNote.hidden = !note
+    el.listNote.textContent = note || ''
     if (!rows.length) { el.resEmpty.textContent = row.none; el.resEmpty.hidden = false; return }
     el.resEmpty.hidden = true
     rows.forEach(s => {
@@ -432,12 +434,35 @@ let chartId = '3778678'
 function doSearch(kw = el.q.value.trim()) {
   if (!kw) return
   showTab('search')
-  return loadList(SEARCH_ROW, () => api(`/api/search?q=${encodeURIComponent(kw)}`).then(r => r.songs || []))
+  return loadList(SEARCH_ROW, () =>
+    api(`/api/search?q=${encodeURIComponent(kw)}`).then(r => ({ rows: r.songs || [] })))
+}
+
+// 榜单一次取全量，「只看有谱」在前端筛：切换不必等重新查谱
+let chartCache = { id: '', tracks: [], total: 0, sheeted: 0, pages: 0 }
+
+function chartView() {
+  const c = chartCache
+  const only = el.onlySheet.checked
+  const rows = only ? c.tracks.filter(t => t.sheetCount > 0) : c.tracks
+  const pct = c.total ? Math.round(c.sheeted * 100 / c.total) : 0
+  const parts = [`${c.name || ''} ${c.total} 首`, `${c.sheeted} 首有谱（${pct}%）`, `${c.pages} 份谱`]
+  if (only && rows.length !== c.total) parts.push(`已筛掉无谱，显示 ${rows.length}`)
+  if (c.sheeted <= 5) parts.push('这份榜单官方谱极少，歌太新还没上谱')
+  return { rows, note: parts.join(' · ') }
 }
 
 const loadChart = () =>
-  loadList(CHART_ROW, () =>
-    api(`/api/chart?id=${chartId}&sheets=${el.onlySheet.checked ? 1 : 0}`).then(r => r.tracks || []))
+  loadList(CHART_ROW, () => api(`/api/chart?id=${chartId}&sheets=0`).then(r => {
+    chartCache = Object.assign({ id: chartId }, r)
+    return chartView()
+  }))
+
+// 换 checkbox 只重筛本地数据：谱信息已在 chartCache 里，不必重新查谱
+const filterChart = () =>
+  chartCache.id === chartId
+    ? loadList(CHART_ROW, () => Promise.resolve(chartView()))
+    : loadChart()
 
 async function loadCharts() {
   try {
@@ -473,6 +498,7 @@ function setTab(mode) {
   if (el.q.value.trim()) return doSearch()
   ++listSeq // 作废在途的榜单请求，别让它回填到搜索视图
   el.results.innerHTML = ''
+  el.listNote.hidden = true
   el.resEmpty.hidden = false
   el.resEmpty.textContent = '输入关键词后回车。搜到的歌若有官方谱，选中即可走带。'
 }
@@ -513,8 +539,8 @@ async function pick(li, s, preset) {
     el.sheetCount.textContent = S.sheets.length ? `${S.sheets.length} 份` : ''
     if (!S.sheets.length) {
       el.sheetEmpty.hidden = false
-      el.sheetEmpty.innerHTML = `<b>官方曲谱库没有这首歌</b>（实测热歌榜约 28% 无谱，冷门歌更高）。<br>
-        可换一首，或把谱页图片拖到谱面上自己标注。`
+      el.sheetEmpty.innerHTML = `<b>官方曲谱库没有这首歌</b>（热歌榜约 28% 无谱，新歌/原创榜 98% 无谱——歌太新，官方还没上谱）。<br>
+        可换一首热歌榜的，或把谱页图片拖到谱面上自己标注。`
       $('#ovInner .ov-sub').innerHTML = '这首歌没有官方谱。<br>把谱页图片拖到这里，可自建谱面并打点。'
     } else {
       el.sheetEmpty.hidden = true
@@ -711,7 +737,7 @@ const esc = (t) => String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<':
 $('#btnSearch').onclick = () => doSearch()
 el.q.onkeydown = (e) => { if (e.key === 'Enter') doSearch() }
 $$('.tab').forEach(b => { b.onclick = () => setTab(b.dataset.tab) })
-el.onlySheet.onchange = () => { if (tab === 'chart') loadChart() }
+el.onlySheet.onchange = () => { if (tab === 'chart') filterChart() }
 el.btnLogin.onclick = async () => {
   const s = await api('/api/session')
   if (s.logged) { await api('/api/logout', { method: 'POST' }); await refreshSession(); return }

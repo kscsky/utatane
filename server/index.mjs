@@ -120,7 +120,14 @@ const api = {
     const id = url.searchParams.get('id') || '3778678'
     const only = url.searchParams.get('sheets') === '1'
     const c = await ncm.chart(id)
-    return { name: c.name, tracks: only ? c.tracks.filter(t => t.sheetCount > 0) : c.tracks }
+    const sheeted = c.tracks.filter(t => t.sheetCount > 0)
+    return {
+      name: c.name,
+      total: c.tracks.length,
+      sheeted: sheeted.length,
+      pages: sheeted.reduce((a, t) => a + t.sheetCount, 0),
+      tracks: only ? sheeted : c.tracks,
+    }
   },
 
   'GET /api/charts': async () => ({ charts: ncm.CHARTS }),
