@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8" /><title>utatane 自测</title>
+<style>
+  body { background:#111; color:#e8e8f0; font:13px/1.7 ui-monospace,Consolas,monospace; padding:16px; }
+  h2 { font-size:14px; margin:0 0 10px; }
+  #frame { width:1260px; height:780px; border:1px solid #333; }
+</style>
+</head>
+<body>
+<h2>utatane 浏览器端自测（同源 iframe 驱动真实 app）</h2>
+<div id="out">运行中…</div>
+<iframe id="frame" src="/index.html?song=186016"></iframe>
+<script>
+const out = document.getElementById('out')
+const lines = []
+let fails = 0
+const ok = (name, cond, extra = '') => {
+  if (!cond) fails++
+  lines.push(`${cond ? 'PASS' : 'FAIL'}  ${name}${extra ? '  |  ' + extra : ''}`)
+  out.innerHTML = lines.join('\n')
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
+async function waitReady(pred, ms = 25000) {
+  const t0 = Date.now()
+  while (Date.now() - t0 < ms) {
+    try { if (pred()) return true } catch { /* iframe 未就绪 */ }
+    await sleep(150)
+  }
+  return false
+}
+
+;(async () => {
+  const f = document.getElementById('frame')
+  const win = f.contentWindow
+  const D = () => f.contentDocument
+  const space = () => win.document.body.dispatchEvent(new win.KeyboardEvent('keydown', { code: 'Space', key: ' ', bubbles: true }))
+  const change = (el) => { el.dispatchEvent(new win.Event('change', { bubbles: true })) }
+
+  ok('应用挂载（读谱线存在）', await waitReady(() => D().querySelector('.readline .bar')))
+
+  const imgReady = await waitReady(() => {
+    const i = D().querySelector('.strip img')
+    return i && i.complete && i.naturalWidth > 0
+  })
+  const img = D().querySelector('.strip img')
+  ok('谱图经服务端代理加载成功', imgReady, img ? `${img.naturalWidth}x${img.naturalHeight}` : '无图')
+
+  const items = [...D().querySelectorAll('#sheets li')]
+  ok('曲谱列表渲染（深链 ?song=）', items.length >= 8, `${items.length} 份`)
+  ok('首份谱被自动选中', items.some(li => li.classList.contains('on')))
+
+  const strip = D().querySelector('.strip')
+  const wy = () => (strip.dataset.wy != null ? Number(strip.dataset.wy) : null)
+  const seek = D().getElementById('seek')
+  const dur = Number(seek.max)
+  ok('时长写入进度条', dur > 200000, `max=${dur}`)
+
+  const setT = async (frac) => {
+    seek.value = String(Math.round(dur * frac))
+    seek.dispatchEvent(new win.Event('input', { bubbles: true }))
+    await sleep(260)
+    return wy()
+  }
+
+  // ---- 核心：seek 驱动滚动 ----
+  const y00 = await setT(0)
+  const y25 = await setT(0.25)
+  const y50 = await setT(0.5)
+  const y80 = await setT(0.8)
+  const y99 = await setT(0.99)
+  ok('seek 驱动谱带位移', y00 !== null && y80 > y00, `0%=${y00} 80%=${y80}`)
+  ok('位移随时间单调不减', y25 >= y00 && y50 >= y25 && y80 >= y50 && y99 >= y80, [y00, y25, y50, y80, y99].join(' → '))
+  ok('位移幅度接近整条谱带', (y99 - y00) > img.clientHeight * 0.6, `位移=${y99 - y00} 显示高=${img.clientHeight}`)
+  ok('时间读数随之更新', D().getElementById('tCur').textContent === '4:26', D().getElementById('tCur').textContent)
+  ok('往回 seek 会回退', (await setT(0.2)) < (await setT(0.7)))
+
+  // ---- 歌词 ----
+  const nowL = () => D().querySelector('.now-lyric').textContent.trim()
+  ok('歌词已渲染', nowL().length > 1, `"${nowL()}"`)
+  ok('制作信息未混入歌词', !/作词|作曲|编曲|和声/.test(nowL()), `"${nowL()}"`)
+
+  // ---- 视觉（粒子在 body 坐标 0.9 高内，按元素矩形换算采样点） ----
+  const cv = D().getElementById('bgCanvas')
+  const cx = cv.getContext('2d')
+  const r = cv.getBoundingClientRect()
+  ok('canvas 尺寸与显示一致', cv.width === Math.round(r.width) && cv.height === Math.round(r.height), `${cv.width}x${cv.height} vs ${Math.round(r.width)}x${Math.round(r.height)}`)
+  await sleep(700)
+  let inked = 0
+  const px = cx.getImageData(0, 0, cv.width, cv.height).data
+  for (let i = 3; i < px.length; i += 4) if (px[i] > 8) inked++
+  ok('背景粒子有绘制', inked > 500, `非透明像素=${inked}`)
+  ok('封面铺底已启用', D().getElementById('bgCover').classList.contains('on'))
+
+  // ---- 实时走带：本机时钟应以真实速度推进 ----
+  space(); await sleep(200)
+  ok('空格无音源 → 本机时钟起播', D().getElementById('btnPlay').textContent === '❚❚')
+  const ta = Number(strip.dataset.t); await sleep(1000)
+  const tb = Number(strip.dataset.t)
+  ok('本机时钟实时推进（±25%）', tb - ta > 750 && tb - ta < 1250, `1s 走 ${tb - ta}ms`)
+
+  // ---- 打点：如实记录，不强制首点为 0 ----
+  D().getElementById('btnReset').dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  await sleep(150)
+  await setT(0.3); space(); await sleep(200)
+  await setT(0.6); space(); await sleep(200)
+  const rows = [...D().querySelectorAll('#anchorList li')].map(li => li.textContent.replace(/\s+/g, ' ').trim())
+  ok('打点记录 2 点', rows.length === 2, rows.join(' / '))
+  ok('首点保留实际时刻（非 0:00）', !/^#1 · 0:00/.test(rows[0]), rows[0])
+  ok('打点后切手工模式', D().getElementById('mode').value === 'manual')
+  ok('打点已持久化', Object.keys(win.localStorage).some(k => k.includes('.stamp.')))
+
+  // 打点单调性保护：往回打应被忽略
+  const before = [...D().querySelectorAll('#anchorList li')].length
+  await setT(0.1); space(); await sleep(200)
+  ok('倒退打点被拒绝', [...D().querySelectorAll('#anchorList li')].length === before, `${before} → ${[...D().querySelectorAll('#anchorList li')].length}`)
+
+  // 手工锚点应改变映射
+  const yManual = await setT(0.55)
+  D().getElementById('mode').value = 'auto'; change(D().getElementById('mode'))
+  await sleep(220)
+  const yAuto = await setT(0.55)
+  ok('手工锚点改变滚动映射', Math.abs(yManual - yAuto) > 1, `manual=${yManual} auto=${yAuto}`)
+
+  // ---- BPM 谱 ----
+  const g = items.find(li => /60 BPM/.test(li.textContent))
+  ok('存在带 BPM 的谱', !!g)
+  if (g) {
+    g.dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+    await sleep(800)
+    D().getElementById('mode').value = 'bpm'; change(D().getElementById('mode'))
+    await sleep(300)
+    ok('BPM 模式生成小节刻度', D().querySelectorAll('.ruler i').length > 3, `刻度=${D().querySelectorAll('.ruler i').length}`)
+    const b1 = await setT(0.1), b2 = await setT(0.6)
+    ok('BPM 模式下连续滚动', b2 > b1, `${b1} → ${b2}`)
+    ok('状态栏显示 BPM 来源', /BPM 60/.test(D().getElementById('anchorInfo').textContent), D().getElementById('anchorInfo').textContent)
+  }
+
+  // ---- 榜单入口：默认视图 + 有谱徽标 + 只看有谱开关 ----
+  const chartGot = await waitReady(
+    () => D().getElementById('results')?.dataset.src === 'chart' && D().querySelectorAll('#results li').length >= 20,
+    25000)
+  ok('默认视图为官方榜单', chartGot, `条数=${D().querySelectorAll('#results li').length}`)
+  ok('榜单选择器已渲染', D().querySelectorAll('#chartPick button').length === 3,
+     `榜单数=${D().querySelectorAll('#chartPick button').length}`)
+  const badge = [...D().querySelectorAll('#results .s')].map(n => n.textContent)
+  ok('每条给出谱份数徽标', badge.every(t => /谱\d+份/.test(t)), badge[0])
+  ok('勾选只看有谱时不出现无谱', !badge.some(t => /无谱/.test(t)))
+  ok('徽标附带 BPM（约半数有值）', badge.filter(t => /BPM/.test(t)).length >= 5,
+     `带BPM=${badge.filter(t => /BPM/.test(t)).length}/${badge.length}`)
+  // 取消“只看有谱”→ 应补回无谱歌曲（服务端有谱信息已缓存，不重复查谱）
+  const chk = D().getElementById('onlySheet')
+  chk.checked = false
+  change(chk)
+  const allGot = await waitReady(
+    () => D().querySelectorAll('#results li').length >= 55 && /无谱/.test(D().getElementById('results').textContent),
+    25000)
+  ok('取消只看有谱后列出全榜', allGot, `条数=${D().querySelectorAll('#results li').length}`)
+  chk.checked = true
+  change(chk)
+  await waitReady(() => /谱\d+份/.test(D().getElementById('results').textContent), 20000)
+
+  // ---- 搜索可用性（结果列表非空且可点） ----
+  D().getElementById('q').value = '周杰伦'
+  D().getElementById('btnSearch').dispatchEvent(new win.MouseEvent('click', { bubbles: true }))
+  const gotNew = await waitReady(
+    () => D().getElementById('results').dataset.src === 'search' && D().querySelectorAll('#results li').length >= 5,
+    12000)
+  ok('搜索返回结果列表并切到搜索视图', gotNew,
+     `条数=${D().querySelectorAll('#results li').length} src=${D().getElementById('results').dataset.src}`)
+
+  // ---- 确无谱的歌：优雅降级 + 清场（独立 iframe，避免干扰主用例）----
+  // 1881426227 = 热歌榜实测无谱
+  const f2 = document.createElement('iframe')
+  f2.src = '/index.html?song=1881426227'
+  f2.style.cssText = 'width:1260px;height:780px;border:1px solid #333;display:block;margin-top:10px'
+  document.body.appendChild(f2)
+  const D2 = () => f2.contentDocument
+  const ready2 = await waitReady(() => /冬天|Violet|茉茉|玻璃/.test(D2().getElementById('pTitle')?.textContent || ''), 15000)
+  ok('无谱歌曲可正常载入', ready2, `标题=${D2().getElementById('pTitle')?.textContent}`)
+  const empty2 = D2().getElementById('sheetEmpty')
+  ok('无谱歌曲给出明确提示', !empty2.hidden && /没有这首歌|拖|标注/.test(empty2.textContent), empty2.textContent.replace(/\s+/g, ' ').slice(0, 52))
+  ok('无谱时谱面为空', D2().querySelectorAll('.strip img').length === 0, `残留图=${D2().querySelectorAll('.strip img').length}`)
+  // 有免费音源的歌走真音频，没有才切本机时钟：两者其一即可
+  const clockReady = await waitReady(() =>
+    D2().getElementById('btnDemo').classList.contains('accent') || !!D2().getElementById('audio').src, 15000)
+  ok('无谱时仍有可用的走带时钟', clockReady,
+     `演示=${D2().getElementById('btnDemo').classList.contains('accent')} 音频=${D2().getElementById('audio').src ? '有' : '无'}`)
+  const durShown = await waitReady(() => D2().getElementById('tDur').textContent !== '0:00', 12000)
+  ok('无谱时时间线仍可用', durShown, `时长=${D2().getElementById('tDur').textContent}`)
+  ok('无谱时状态栏给出提示', /无谱/.test(D2().getElementById('pageInfo').textContent), D2().getElementById('pageInfo').textContent)
+
+  // ---- 端到端：有谱 + 匿名可出声的歌（热歌榜实测 33% 满足）----
+  const f3 = document.createElement('iframe')
+  f3.src = '/index.html?song=1456890009'   // 罗生门：10 份谱 · 120 BPM
+  f3.style.cssText = 'width:1260px;height:780px;border:1px solid #333;display:block;margin-top:10px'
+  document.body.appendChild(f3)
+  const D3 = () => f3.contentDocument
+  await waitReady(() => /罗生门/.test(D3().getElementById('pTitle')?.textContent || ''), 15000)
+  const t0 = await waitReady(() => D3().getElementById('tDur').textContent !== '0:00', 12000)
+  ok('可播歌曲时长就绪', t0, `时长=${D3().getElementById('tDur').textContent}`)
+  ok('该歌有官方谱', D3().querySelectorAll('#sheets li').length > 3, `谱=${D3().querySelectorAll('#sheets li').length} 份`)
+  const a3 = D3().getElementById('audio')
+  const gotSrc = await waitReady(() => a3.src && a3.src.includes('/api/audio'), 15000)
+  ok('拿到真实音源地址（短 key，不外泄直链）', gotSrc, a3.src ? '有 src' : '无 src')
+  const meta = await waitReady(() => D3().getElementById('pSub').textContent.includes('·'), 8000)
+  ok('曲目信息已填充', meta, D3().getElementById('pTitle').textContent + ' / ' + D3().getElementById('pSub').textContent)
+
+  out.innerHTML = lines.join('\n') + `\n\n${fails ? '❌ ' + fails + ' 项失败' : '✅ 全部通过'}`
+  document.title = fails ? 'FAIL' : 'DONE'
+})().catch(e => {
+  lines.push('EXCEPTION ' + e.message)
+  out.innerHTML = lines.join('\n')
+  document.title = 'FAIL'
+})
+</script>
+</body>
+</html>

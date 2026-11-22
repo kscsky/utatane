@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>歌種 utatane — 谱随歌动</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+<div id="bg">
+  <div id="bgCover"></div>
+  <canvas id="bgCanvas"></canvas>
+  <div id="bgScrim"></div>
+</div>
+
+<header>
+  <div class="brand">
+    <span class="kanji">歌種</span>
+    <span class="romaji">utatane</span>
+    <span class="tag">谱随歌动 · M0</span>
+  </div>
+  <div class="head-right">
+    <div class="search">
+      <input id="q" type="search" placeholder="搜歌名 / 歌手，回车搜索" autocomplete="off" />
+      <button id="btnSearch" title="搜索">搜索</button>
+    </div>
+    <button id="btnLogin" class="ghost">扫码登录</button>
+    <span id="who" class="who"></span>
+  </div>
+</header>
+
+<main>
+  <!-- 左：曲目与谱库 -->
+  <aside id="left">
+    <section class="card">
+      <h3>
+        <button class="tab on" data-tab="chart">榜单</button>
+        <button class="tab" data-tab="search">搜索</button>
+        <label class="onlysheet"><input id="onlySheet" type="checkbox" checked />只看有谱</label>
+      </h3>
+      <div class="chartpick" id="chartPick"></div>
+      <ul id="results" class="list"></ul>
+      <p id="resEmpty" class="empty">榜单前 60 首里约 <b>72%</b> 有官方谱，<br />热歌榜约 1/3 还能免登录直接出声。</p>
+    </section>
+
+    <section class="card">
+      <h3>曲谱 <span id="sheetCount" class="pill"></span></h3>
+      <ul id="sheets" class="list"></ul>
+      <p id="sheetEmpty" class="empty">
+        选中歌曲后列出网易云曲谱库。<br />
+        谱是<b>多页图片</b>（官方如此），所以本页做「时间锚点滚动」，
+        而不是逐音符高亮。
+      </p>
+    </section>
+  </aside>
+
+  <!-- 中：谱面 -->
+  <section id="stage">
+    <div class="stage-top">
+      <div class="now-lyric" id="nowLyric"></div>
+      <div class="next-lyric" id="nextLyric"></div>
+    </div>
+
+    <div class="sheet-frame" id="frame">
+      <div class="ruler" id="ruler"></div>
+      <div class="strip" id="strip"></div>
+      <div class="readline"><span class="bar"></span><em>读谱线</em></div>
+      <div class="overlay" id="overlay">
+        <div class="ov-inner" id="ovInner">
+          <div class="ov-title">歌種</div>
+          <div class="ov-sub">搜索一首有谱的歌，<br />音源需要登录，谱图不需要。</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="stage-foot">
+      <div class="pageinfo" id="pageInfo">—</div>
+      <div class="anchors" id="anchorInfo"></div>
+    </div>
+  </section>
+
+  <!-- 右：控制台 -->
+  <aside id="right">
+    <section class="card">
+      <h3>同步</h3>
+      <label class="row"><span>模式</span>
+        <select id="mode">
+          <option value="auto">匀速（按时长）</option>
+          <option value="bpm">节拍（有 BPM 时）</option>
+          <option value="manual">我打的点</option>
+        </select>
+      </label>
+      <label class="row"><span>提前量</span>
+        <input id="lead" type="range" min="-1500" max="1500" step="50" value="0" />
+        <b id="leadV">0ms</b>
+      </label>
+      <label class="row"><span>每页驻留</span>
+        <input id="dwell" type="range" min="0" max="60" step="1" value="18" />
+        <b id="dwellV">18%</b>
+      </label>
+      <label class="row"><span>手感</span>
+        <select id="easing">
+          <option value="linear">线性</option>
+          <option value="smooth" selected>缓入缓出</option>
+          <option value="step">逐小节跳</option>
+        </select>
+      </label>
+    </section>
+
+    <section class="card">
+      <h3>打点 <span class="pill">一等公民</span></h3>
+      <p class="hint">播放到该翻页的瞬间按 <kbd>空格</kbd>，为下一页记一个时间戳。
+        存本机后永久复用——这是图片谱唯一可靠的同步方式。</p>
+      <div class="btnrow">
+        <button id="btnStamp" class="accent">标记下一页 (空格)</button>
+        <button id="btnReset" class="ghost">清空</button>
+      </div>
+      <ol id="anchorList" class="anchorlist"></ol>
+    </section>
+
+    <section class="card">
+      <h3>视觉</h3>
+      <label class="row"><span>强度</span>
+        <input id="fx" type="range" min="0" max="100" step="1" value="62" />
+        <b id="fxV">62</b>
+      </label>
+      <label class="row"><span>配色</span>
+        <select id="pal">
+          <option value="auto" selected>从封面自动取色</option>
+          <option value="sakura">樱 · 粉紫</option>
+          <option value="ocean">海 · 青蓝</option>
+          <option value="night">夜 · 靛紫</option>
+        </select>
+      </label>
+    </section>
+  </aside>
+</main>
+
+<footer id="player">
+  <div class="art" id="art"></div>
+  <div class="meta">
+    <div class="title" id="pTitle">未选曲</div>
+    <div class="sub" id="pSub">—</div>
+  </div>
+  <div class="controls">
+    <button id="btnPlay" class="big" title="播放/暂停">▶</button>
+    <button id="btnDemo" class="ghost" title="无音源时用歌词时钟演示滚动">演示时钟</button>
+  </div>
+  <div class="seek">
+    <span id="tCur">0:00</span>
+    <input id="seek" type="range" min="0" max="1000" value="0" />
+    <span id="tDur">0:00</span>
+  </div>
+  <div class="vol">
+    <span>音</span><input id="vol" type="range" min="0" max="100" value="80" />
+  </div>
+  <audio id="audio" preload="auto"></audio>
+</footer>
+
+<!-- 登录弹层 -->
+<div id="loginModal" class="modal" hidden>
+  <div class="modal-box">
+    <button class="close" id="loginClose">×</button>
+    <h3>用网易云账号登录</h3>
+    <p class="hint">Cookie 只存在你本机的 <code>server/session.json</code>，
+      不外传、不上传。谱图与音源需要登录态。</p>
+    <div class="qrwrap"><img id="qrImg" alt="二维码" /><div id="qrState" class="qrstate"></div></div>
+    <button id="btnQr" class="accent">生成二维码</button>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

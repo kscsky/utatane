@@ -1,0 +1,16 @@
+{
+  "name": "utatane",
+  "version": "0.1.0",
+  "private": true,
+  "description": "歌種 utatane — 网易云曲谱同步滚动播放器 (M0)",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4"
+  }
+}
